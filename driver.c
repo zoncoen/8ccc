@@ -1,10 +1,14 @@
 #include <stdio.h>
 
-extern int mymain(void);
+extern int type;
+extern char *mymain(void);
 
 int main(int argc, char **argv)
 {
-    int val = mymain();
-    printf("%d\n", val);
+    if (type == 1) {
+        printf("%d\n", (int)(mymain()));
+    } else {
+        printf("%s\n", mymain());
+    }
     return 0;
 }
