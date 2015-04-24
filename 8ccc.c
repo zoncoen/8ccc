@@ -15,15 +15,25 @@ void error(char *fmt, ...)
     exit(1);
 }
 
-void compile_number(int n)
+void skip_space(void)
 {
     int c;
     while ((c = getc(stdin)) != EOF) {
         if (isspace(c)) {
-            break;
+            continue;
         }
+        ungetc(c, stdin);
+        return;
+    }
+}
+
+int read_number(int n)
+{
+    int c;
+    while ((c = getc(stdin)) != EOF) {
         if (!isdigit(c)) {
-            error("Invalid character in number: '%c'", c);
+            ungetc(c, stdin);
+            return n;
         }
         if (n < 0) {
             n = n * 10 - (c - '0');
@@ -31,6 +41,49 @@ void compile_number(int n)
             n = n * 10 + (c - '0');
         }
     }
+    return n;
+}
+
+int compile_expr2(void)
+{
+    for (;;) {
+        skip_space();
+        int c = getc(stdin);
+        if (c == EOF) {
+            printf("\tret\n");
+            exit(0);
+        }
+        char *op;
+        if (c == '+') {
+            op = "add";
+        } else if (c == '-') {
+            op = "sub";
+        } else {
+            error("Operator expected, but got '%c'", c);
+        }
+        skip_space();
+        c = getc(stdin);
+        if (!isdigit(c)) {
+            if (c == '-') {
+                skip_space();
+                c = getc(stdin);
+                if (isdigit(c)) {
+                    printf("\t%s $%d, %%rax\n", op, read_number(-(c - '0')));
+                } else {
+                    error("Number expected, but got '%c'", c);
+                }
+            } else {
+                error("Number expected, but got '%c'", c);
+            }
+        } else {
+            printf("\t%s $%d, %%rax\n", op, read_number(c - '0'));
+        }
+    }
+}
+
+void compile_expr(int n)
+{
+    n = read_number(n);
     printf(
         ".text\n"
         "\t.global _type\n"
@@ -38,9 +91,9 @@ void compile_number(int n)
         "_type:\n"
         "\t.long 1\n"
         "_mymain:\n"
-        "\tmov $%d, %%rax\n"
-        "\tret\n",
+        "\tmov $%d, %%rax\n",
         n);
+    compile_expr2();
 }
 
 void compile_string(void)
@@ -80,24 +133,26 @@ void compile_string(void)
         "\tlea .mydata(%%rip), %%rax\n"
         "\tret\n",
         buf);
+    exit(0);
 }
 
 void compile(void)
 {
     int c = getc(stdin);
     if (isdigit(c)) {
-        return compile_number(c - '0');
-    }
-    if (c == '-') {
+        compile_expr(c - '0');
+    } else if (c == '-') {
         c = getc(stdin);
         if (isdigit(c)) {
-            return compile_number(-(c - '0'));
+            compile_expr(-(c - '0'));
+        } else {
+            error("Number expected, but got '%c'", c);
         }
+    } else if (c == '"') {
+        compile_string();
+    } else {
+        error("Don't know how to handle '%c'", c);
     }
-    if (c == '"') {
-        return compile_string();
-    }
-    error("Don't know how to handle '%c'", c);
 }
 
 int main(int argc, char **argv)

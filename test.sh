@@ -14,6 +14,15 @@ function run {
 
     testfail '"abc'
     testfail '0abc'
+
+    # arithmetic operation
+    test 3 '1+2'
+    test 3 '1 + 2'
+    test 1 '-1 + 2'
+    test -1 '1 + -2'
+    test 10 '1+2+3+4'
+
+    testfail '1+'
 }
 
 function setup {
