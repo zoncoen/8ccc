@@ -1,9 +1,15 @@
 #!/bin/bash
 
 function run {
-    #ast
+    # ast
     testast '1' '1'
+    testast '-1' '-1'
     testast '(+ (- (+ 1 2) 3) 4)' '1+2-3+4'
+    testast '(+ (+ 1 (* 2 3)) 4)' '1+2*3+4'
+    testast '(+ (* 1 2) (* 3 4))' '1*2+3*4'
+    testast '(+ (/ 4 2) (/ 6 3))' '4/2+6/3'
+    testast '(/ (/ 24 2) 4)' '24/2/4'
+    testast '(/ (/ 24 -2) 4)' '24/-2/4'
 
     # int
     test 0 0
@@ -26,6 +32,13 @@ function run {
     test -1 '1 + -2'
     test 10 '1+2+3+4'
     test 4 '1+2-3+4'
+    test 11 '1+2*3+4'
+    test 14 '1*2+3*4'
+    test 4 '4/2+6/3'
+    test 3 '24/2/4'
+    test -9 '-3*3'
+    test 1 '3/3'
+    test 1 '-3/-3'
 
     testfail '1+'
     testfail '1+"abc"'
