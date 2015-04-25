@@ -8,14 +8,20 @@
 
 enum {
     AST_INT,
-    AST_STR,
+    AST_SYM,
 };
+
+typedef struct Var {
+    char *name;
+    int pos;
+    struct Var *next;
+} Var;
 
 typedef struct Ast {
     char type;
     union {
         int ival;
-        char *sval;
+        Var *var;
         struct {
             struct Ast *left;
             struct Ast *right;
@@ -23,9 +29,10 @@ typedef struct Ast {
     };
 } Ast;
 
+Var *vars = NULL;
+
 void error(char *fmt, ...) __attribute__((noreturn));
-void emit_intexpr(Ast *ast);
-Ast *read_string(void);
+void emit_expr(Ast *ast);
 Ast *read_expr(void);
 
 void error(char *fmt, ...)
@@ -55,25 +62,48 @@ Ast *make_ast_int(int val)
     return r;
 }
 
-Ast *make_ast_str(char *str)
+Ast *make_ast_sym(Var *var)
 {
     Ast *r = malloc(sizeof(Ast));
-    r->type = AST_STR;
-    r->sval = str;
+    r->type = AST_SYM;
+    r->var = var;
     return r;
+}
+
+Var *find_var(char *name)
+{
+    Var *v = vars;
+    for (; v; v = v->next) {
+        if (!strcmp(name, v->name)) {
+            return v;
+        }
+    }
+    return NULL;
+}
+
+Var *make_var(char *name)
+{
+    Var *v = malloc(sizeof(Var));
+    v->name = name;
+    v->pos = vars ? vars->pos + 1 : 1;
+    v->next = vars;
+    vars = v;
+    return v;
 }
 
 int priority(char op)
 {
     switch (op) {
+        case '=':
+            return 1;
         case '+':
         case '-':
-            return 1;
+            return 2;
         case '*':
         case '/':
-            return 2;
+            return 3;
         default:
-            error("Unknown binary operator: %c", op);
+            return -1;
     }
 }
 
@@ -106,31 +136,28 @@ Ast *read_number(int n)
     return make_ast_int(n);
 }
 
-Ast *read_string(void)
+Ast *read_symbol(c)
 {
     char *buf = malloc(BUFLEN);
-    int i = 0;
+    buf[0] = c;
+    int i = 1;
     for (;;) {
         int c = getc(stdin);
-        if (c == EOF) {
-            error("Unterminated string");
-        }
-        if (c == '"') {
+        if (!isalpha(c)) {
+            ungetc(c, stdin);
             break;
-        }
-        if (c == '\\') {
-            c = getc(stdin);
-            if (c == EOF) {
-                error("Unterminated \\");
-            }
         }
         buf[i++] = c;
         if (i == BUFLEN - 1) {
-            error("String too long");
+            error("Symbol too long");
         }
     }
     buf[i] = '\0';
-    return make_ast_str(buf);
+    Var *v = find_var(buf);
+    if (!v) {
+        v = make_var(buf);
+    }
+    return make_ast_sym(v);
 }
 
 Ast *read_prim(void)
@@ -144,17 +171,21 @@ Ast *read_prim(void)
         if (isdigit(c)) {
             return read_number(-(c - '0'));
         }
-    } else if (c == '"') {
-        return read_string();
+    } else if (isalpha(c)) {
+        return read_symbol(c);
     } else if (c == EOF) {
-        error("Unexpected EOF");
+        return NULL;
     }
     error("Don't know how to handle '%c'", c);
 }
 
 Ast *read_expr2(int prec)
 {
+    skip_space();
     Ast *ast = read_prim();
+    if (!ast) {
+        return NULL;
+    }
     for (;;) {
         skip_space();
         int c = getc(stdin);
@@ -162,7 +193,7 @@ Ast *read_expr2(int prec)
             return ast;
         }
         int prec2 = priority(c);
-        if (prec2 < prec) {
+        if (prec2 < 0 || prec2 < prec) {
             ungetc(c, stdin);
             return ast;
         }
@@ -174,18 +205,16 @@ Ast *read_expr2(int prec)
 
 Ast *read_expr(void)
 {
-    return read_expr2(0);
-}
-
-void print_quote(char *p)
-{
-    while (*p) {
-        if (*p == '\"' || *p == '\\') {
-            printf("\\");
-        }
-        printf("%c", *p);
-        p++;
+    Ast *r = read_expr2(0);
+    if (!r) {
+        return NULL;
     }
+    skip_space();
+    int c = getc(stdin);
+    if (c != ';') {
+        error("Unterminated expression");
+    }
+    return r;
 }
 
 void print_ast(Ast *ast)
@@ -194,8 +223,8 @@ void print_ast(Ast *ast)
         case AST_INT:
             printf("%d", ast->ival);
             break;
-        case AST_STR:
-            print_quote(ast->sval);
+        case AST_SYM:
+            printf("%s", ast->var->name);
             break;
         default:
             printf("(%c ", ast->type);
@@ -206,28 +235,16 @@ void print_ast(Ast *ast)
     }
 }
 
-void emit_string(Ast *ast)
-{
-    printf(
-        "\t.data\n"
-        ".mydata:\n"
-        "\t.string \"");
-    print_quote(ast->sval);
-    printf(
-        "\"\n"
-        "\t.text\n"
-        "\t.global _type\n"
-        "\t.global _mymain\n"
-        "_type:\n"
-        "\t.long 2\n"
-        "_mymain:\n"
-        "\tlea .mydata(%%rip), %%rax\n"
-        "\tret\n");
-    return;
-}
-
 void emit_binop(Ast *ast)
 {
+    if (ast->type == '=') {
+        emit_expr(ast->right);
+        if (ast->left->type != AST_SYM) {
+            error("Symbol expected");
+        }
+        printf("\tmov %%eax, -%d(%%rbp)\n", ast->left->var->pos * 4);
+        return;
+    }
     char *op;
     switch (ast->type) {
         case '+':
@@ -244,9 +261,9 @@ void emit_binop(Ast *ast)
         default:
             error("invalid operator '%c'", ast->type);
     }
-    emit_intexpr(ast->left);
+    emit_expr(ast->left);
     printf("\tpush %%rax\n");
-    emit_intexpr(ast->right);
+    emit_expr(ast->right);
     if (ast->type == '/') {
         printf("\tmov %%eax, %%ebx\n");
         printf("\tpop %%rax\n");
@@ -258,54 +275,42 @@ void emit_binop(Ast *ast)
     }
 }
 
-void ensure_intexpr(Ast *ast)
+void emit_expr(Ast *ast)
 {
     switch (ast->type) {
-        case '+':
-        case '-':
-        case '*':
-        case '/':
         case AST_INT:
-            return;
+            printf("\tmov $%d, %%eax\n", ast->ival);
+            break;
+        case AST_SYM:
+            printf("\tmov -%d(%%rbp), %%eax\n", ast->var->pos * 4);
+            break;
         default:
-            error("integer or binary operator expected");
-    }
-}
-
-void emit_intexpr(Ast *ast)
-{
-    ensure_intexpr(ast);
-    if (ast->type == AST_INT) {
-        printf("\tmov $%d, %%eax\n", ast->ival);
-    } else {
-        emit_binop(ast);
-    }
-}
-
-void compile(Ast *ast)
-{
-    if (ast->type == AST_STR) {
-        emit_string(ast);
-    } else {
-        printf(
-            "\t.text\n"
-            "\t.global _type\n"
-            "\t.global _mymain\n"
-            "_type:\n"
-            "\t.long 1\n"
-            "_mymain:\n");
-        emit_intexpr(ast);
-        printf("\tret\n");
+            emit_binop(ast);
     }
 }
 
 int main(int argc, char **argv)
 {
-    Ast *ast = read_expr();
-    if (argc > 1 && !strcmp(argv[1], "-a")) {
-        print_ast(ast);
-    } else {
-        compile(ast);
+    int wantast = (argc > 1 && !strcmp(argv[1], "-a"));
+    if (!wantast) {
+        printf(
+            "\t.text\n"
+            "\t.global _mymain\n"
+            "_mymain:\n");
+    }
+    for (;;) {
+        Ast *ast = read_expr();
+        if (!ast) {
+            break;
+        }
+        if (wantast) {
+            print_ast(ast);
+        } else {
+            emit_expr(ast);
+        }
+    }
+    if (!wantast) {
+        printf("\tret\n");
     }
     return 0;
 }
