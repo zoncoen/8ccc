@@ -1,3 +1,5 @@
+CFLAGS=-Wall
+
 8ccc: 8ccc.o
 
 test:

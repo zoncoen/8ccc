@@ -2,8 +2,33 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <string.h>
 
 #define BUFLEN 256
+
+enum {
+    AST_OP_PLUS,
+    AST_OP_MINUS,
+    AST_INT,
+    AST_STR,
+};
+
+typedef struct Ast {
+    int type;
+    union {
+        int ival;
+        char *sval;
+        struct {
+            struct Ast *left;
+            struct Ast *right;
+        };
+    };
+} Ast;
+
+void error(char *fmt, ...) __attribute__((noreturn));
+void emit_intexpr(Ast *ast);
+Ast *read_string(void);
+Ast *read_expr(void);
 
 void error(char *fmt, ...)
 {
@@ -13,6 +38,31 @@ void error(char *fmt, ...)
     fprintf(stderr, "\n");
     va_end(args);
     exit(1);
+}
+
+Ast *make_ast_op(int type, Ast *left, Ast *right)
+{
+    Ast *r = malloc(sizeof(Ast));
+    r->type = type;
+    r->left = left;
+    r->right = right;
+    return r;
+}
+
+Ast *make_ast_int(int val)
+{
+    Ast *r = malloc(sizeof(Ast));
+    r->type = AST_INT;
+    r->ival = val;
+    return r;
+}
+
+Ast *make_ast_str(char *str)
+{
+    Ast *r = malloc(sizeof(Ast));
+    r->type = AST_STR;
+    r->sval = str;
+    return r;
 }
 
 void skip_space(void)
@@ -27,13 +77,13 @@ void skip_space(void)
     }
 }
 
-int read_number(int n)
+Ast *read_number(int n)
 {
-    int c;
-    while ((c = getc(stdin)) != EOF) {
+    for (;;) {
+        int c = getc(stdin);
         if (!isdigit(c)) {
             ungetc(c, stdin);
-            return n;
+            return make_ast_int(n);
         }
         if (n < 0) {
             n = n * 10 - (c - '0');
@@ -41,64 +91,12 @@ int read_number(int n)
             n = n * 10 + (c - '0');
         }
     }
-    return n;
+    return make_ast_int(n);
 }
 
-int compile_expr2(void)
+Ast *read_string(void)
 {
-    for (;;) {
-        skip_space();
-        int c = getc(stdin);
-        if (c == EOF) {
-            printf("\tret\n");
-            exit(0);
-        }
-        char *op;
-        if (c == '+') {
-            op = "add";
-        } else if (c == '-') {
-            op = "sub";
-        } else {
-            error("Operator expected, but got '%c'", c);
-        }
-        skip_space();
-        c = getc(stdin);
-        if (!isdigit(c)) {
-            if (c == '-') {
-                skip_space();
-                c = getc(stdin);
-                if (isdigit(c)) {
-                    printf("\t%s $%d, %%rax\n", op, read_number(-(c - '0')));
-                } else {
-                    error("Number expected, but got '%c'", c);
-                }
-            } else {
-                error("Number expected, but got '%c'", c);
-            }
-        } else {
-            printf("\t%s $%d, %%rax\n", op, read_number(c - '0'));
-        }
-    }
-}
-
-void compile_expr(int n)
-{
-    n = read_number(n);
-    printf(
-        ".text\n"
-        "\t.global _type\n"
-        "\t.global _mymain\n"
-        "_type:\n"
-        "\t.long 1\n"
-        "_mymain:\n"
-        "\tmov $%d, %%rax\n",
-        n);
-    compile_expr2();
-}
-
-void compile_string(void)
-{
-    char buf[BUFLEN];
+    char *buf = malloc(BUFLEN);
     int i = 0;
     for (;;) {
         int c = getc(stdin);
@@ -120,10 +118,99 @@ void compile_string(void)
         }
     }
     buf[i] = '\0';
+    return make_ast_str(buf);
+}
+
+Ast *read_prim(void)
+{
+    int c = getc(stdin);
+    if (isdigit(c)) {
+        return read_number(c - '0');
+    } else if (c == '-') {
+        skip_space();
+        c = getc(stdin);
+        if (isdigit(c)) {
+            return read_number(-(c - '0'));
+        }
+    } else if (c == '"') {
+        return read_string();
+    } else if (c == EOF) {
+        error("Unexpected EOF");
+    }
+    error("Don't know how to handle '%c'", c);
+}
+
+Ast *read_expr2(Ast *left)
+{
+    skip_space();
+    int c = getc(stdin);
+    if (c == EOF) {
+        return left;
+    }
+    int op;
+    if (c == '+') {
+        op = AST_OP_PLUS;
+    } else if (c == '-') {
+        op = AST_OP_MINUS;
+    } else {
+        error("Operator expected, but got '%c'", c);
+    }
+    skip_space();
+    Ast *right = read_prim();
+    return read_expr2(make_ast_op(op, left, right));
+}
+
+Ast *read_expr(void)
+{
+    Ast *left = read_prim();
+    return read_expr2(left);
+}
+
+void print_quote(char *p)
+{
+    while (*p) {
+        if (*p == '\"' || *p == '\\') {
+            printf("\\");
+        }
+        printf("%c", *p);
+        p++;
+    }
+}
+
+void print_ast(Ast *ast)
+{
+    switch (ast->type) {
+        case AST_OP_PLUS:
+            printf("(+ ");
+            goto print_op;
+        case AST_OP_MINUS:
+            printf("(- ");
+        print_op:
+            print_ast(ast->left);
+            printf(" ");
+            print_ast(ast->right);
+            printf(")");
+            break;
+        case AST_INT:
+            printf("%d", ast->ival);
+            break;
+        case AST_STR:
+            print_quote(ast->sval);
+            break;
+        default:
+            error("should not reach here");
+    }
+}
+
+void emit_string(Ast *ast)
+{
     printf(
-        ".data\n"
+        "\t.data\n"
         ".mydata:\n"
-        "\t.string \"%s\"\n"
+        "\t.string \"");
+    print_quote(ast->sval);
+    printf(
+        "\"\n"
         "\t.text\n"
         "\t.global _type\n"
         "\t.global _mymain\n"
@@ -131,32 +218,68 @@ void compile_string(void)
         "\t.long 2\n"
         "_mymain:\n"
         "\tlea .mydata(%%rip), %%rax\n"
-        "\tret\n",
-        buf);
-    exit(0);
+        "\tret\n");
+    return;
 }
 
-void compile(void)
+void emit_binop(Ast *ast)
 {
-    int c = getc(stdin);
-    if (isdigit(c)) {
-        compile_expr(c - '0');
-    } else if (c == '-') {
-        c = getc(stdin);
-        if (isdigit(c)) {
-            compile_expr(-(c - '0'));
-        } else {
-            error("Number expected, but got '%c'", c);
-        }
-    } else if (c == '"') {
-        compile_string();
+    char *op;
+    if (ast->type == AST_OP_PLUS) {
+        op = "add";
+    } else if (ast->type == AST_OP_MINUS) {
+        op = "sub";
     } else {
-        error("Don't know how to handle '%c'", c);
+        error("invalid operand");
+    }
+    emit_intexpr(ast->left);
+    printf("\tmov %%eax, %%ebx\n");
+    emit_intexpr(ast->right);
+    printf("\t%s %%ebx, %%eax\n", op);
+}
+
+void ensure_intexpr(Ast *ast)
+{
+    if (ast->type != AST_OP_PLUS && ast->type != AST_OP_MINUS &&
+        ast->type != AST_INT) {
+        error("integer or binary operator expected");
+    }
+}
+
+void emit_intexpr(Ast *ast)
+{
+    ensure_intexpr(ast);
+    if (ast->type == AST_INT) {
+        printf("\tmov $%d, %%eax\n", ast->ival);
+    } else {
+        emit_binop(ast);
+    }
+}
+
+void compile(Ast *ast)
+{
+    if (ast->type == AST_STR) {
+        emit_string(ast);
+    } else {
+        printf(
+            "\t.text\n"
+            "\t.global _type\n"
+            "\t.global _mymain\n"
+            "_type:\n"
+            "\t.long 1\n"
+            "_mymain:\n");
+        emit_intexpr(ast);
+        printf("\tret\n");
     }
 }
 
 int main(int argc, char **argv)
 {
-    compile();
+    Ast *ast = read_expr();
+    if (argc > 1 && !strcmp(argv[1], "-a")) {
+        print_ast(ast);
+    } else {
+        compile(ast);
+    }
     return 0;
 }
