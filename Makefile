@@ -1,4 +1,4 @@
-CFLAGS=-Wall
+CFLAGS=-Wall -std=gnu99
 
 8ccc: 8ccc.o
 

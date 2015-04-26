@@ -5,10 +5,12 @@
 #include <string.h>
 
 #define BUFLEN 256
+#define MAX_ARGS 6
 
 enum {
     AST_INT,
     AST_SYM,
+    AST_FUNCALL,
 };
 
 typedef struct Var {
@@ -26,13 +28,20 @@ typedef struct Ast {
             struct Ast *left;
             struct Ast *right;
         };
+        struct {
+            char *fname;
+            int nargs;
+            struct Ast **args;
+        };
     };
 } Ast;
 
 Var *vars = NULL;
+char *REGS[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 
 void error(char *fmt, ...) __attribute__((noreturn));
 void emit_expr(Ast *ast);
+Ast *read_expr2(int prec);
 Ast *read_expr(void);
 
 void error(char *fmt, ...)
@@ -70,10 +79,19 @@ Ast *make_ast_sym(Var *var)
     return r;
 }
 
+Ast *make_ast_funcall(char *fname, int nargs, Ast **args)
+{
+    Ast *r = malloc(sizeof(Ast));
+    r->type = AST_FUNCALL;
+    r->fname = fname;
+    r->nargs = nargs;
+    r->args = args;
+    return r;
+}
+
 Var *find_var(char *name)
 {
-    Var *v = vars;
-    for (; v; v = v->next) {
+    for (Var *v = vars; v; v = v->next) {
         if (!strcmp(name, v->name)) {
             return v;
         }
@@ -136,26 +154,67 @@ Ast *read_number(int n)
     return make_ast_int(n);
 }
 
-Ast *read_symbol(c)
+char *read_ident(char c)
 {
     char *buf = malloc(BUFLEN);
     buf[0] = c;
     int i = 1;
     for (;;) {
         int c = getc(stdin);
-        if (!isalpha(c)) {
+        if (!isalnum(c)) {
             ungetc(c, stdin);
             break;
         }
         buf[i++] = c;
         if (i == BUFLEN - 1) {
-            error("Symbol too long");
+            error("Identifier too long");
         }
     }
     buf[i] = '\0';
-    Var *v = find_var(buf);
+    return buf;
+}
+
+Ast *read_func_args(char *fname)
+{
+    Ast **args = malloc(sizeof(Ast *) * (MAX_ARGS + 1));
+    int i = 0, nargs = 0;
+    for (; i < MAX_ARGS; i++) {
+        skip_space();
+        char c = getc(stdin);
+        if (c == ')') {
+            break;
+        }
+        ungetc(c, stdin);
+        args[i] = read_expr2(0);
+        nargs++;
+        c = getc(stdin);
+        if (c == ')') {
+            break;
+        }
+        if (c == ',') {
+            skip_space();
+        } else {
+            error("Unexpected charanter: '%c'", c);
+        }
+    }
+    if (i == MAX_ARGS) {
+        error("Too many arguments: %s", fname);
+    }
+    return make_ast_funcall(fname, nargs, args);
+}
+
+Ast *read_ident_or_func(char c)
+{
+    char *name = read_ident(c);
+    skip_space();
+    char c2 = getc(stdin);
+    if (c2 == '(') {
+        return read_func_args(name);
+    }
+    ungetc(c2, stdin);
+    Var *v = find_var(name);
     if (!v) {
-        v = make_var(buf);
+        v = make_var(name);
     }
     return make_ast_sym(v);
 }
@@ -172,7 +231,7 @@ Ast *read_prim(void)
             return read_number(-(c - '0'));
         }
     } else if (isalpha(c)) {
-        return read_symbol(c);
+        return read_ident_or_func(c);
     } else if (c == EOF) {
         return NULL;
     }
@@ -212,7 +271,7 @@ Ast *read_expr(void)
     skip_space();
     int c = getc(stdin);
     if (c != ';') {
-        error("Unterminated expression");
+        error("Unterminated expression '%c'", c);
     }
     return r;
 }
@@ -225,6 +284,16 @@ void print_ast(Ast *ast)
             break;
         case AST_SYM:
             printf("%s", ast->var->name);
+            break;
+        case AST_FUNCALL:
+            printf("%s(", ast->fname);
+            for (int i = 0; ast->args[i]; i++) {
+                print_ast(ast->args[i]);
+                if (ast->args[i + 1]) {
+                    printf(",");
+                }
+            }
+            printf(")");
             break;
         default:
             printf("(%c ", ast->type);
@@ -283,6 +352,23 @@ void emit_expr(Ast *ast)
             break;
         case AST_SYM:
             printf("\tmov -%d(%%rbp), %%eax\n", ast->var->pos * 4);
+            break;
+        case AST_FUNCALL:
+            for (int i = 1; i < ast->nargs; i++) {
+                printf("\tpush %%%s\n", REGS[i]);
+            }
+            for (int i = 0; i < ast->nargs; i++) {
+                emit_expr(ast->args[i]);
+                printf("\tpush %%rax\n");
+            }
+            for (int i = ast->nargs - 1; i >= 0; i--) {
+                printf("\tpop %%%s\n", REGS[i]);
+            }
+            printf("\tmov $0, %%eax\n");
+            printf("\tcall _%s\n", ast->fname);
+            for (int i = ast->nargs - 1; i > 0; i--) {
+                printf("\tpop %%%s\n", REGS[i]);
+            }
             break;
         default:
             emit_binop(ast);

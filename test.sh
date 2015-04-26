@@ -11,6 +11,8 @@ function run {
     testast '(/ (/ 24 2) 4)' '24/2/4;'
     testast '(/ (/ 24 -2) 4)' '24/-2/4;'
     testast '(= a 3)' 'a=3;'
+    testast 'a()' 'a();'
+    testast 'a(b,c,d,e,f,g)' 'a(b,c,d,e,f,g);'
 
     # int
     test 0 '0;'
@@ -35,9 +37,16 @@ function run {
     test 1 '3/3;'
     test 1 '-3/-3;'
 
+    # variable
     test 2 '1;2;'
     test 3 'a=1;a+2;'
     test 102 'a=1;b=48+2;c=a+b;c*2;'
+
+    # function call
+    test 25 'sum2(20, 5);'
+    test -25 'sum2(-20, -5);'
+    test -25 'a=-20;sum2(a, -5);'
+    test 15 'sum5(1, 2, 3, 4, 5);'
 
     testfail '"abc'
     testfail '0abc'
