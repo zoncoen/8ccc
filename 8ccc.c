@@ -5,11 +5,13 @@
 #include <string.h>
 
 #define BUFLEN 256
+#define EXPR_LEN 100
 #define MAX_ARGS 6
 
 enum {
     AST_INT,
     AST_SYM,
+    AST_STR,
     AST_FUNCALL,
 };
 
@@ -23,6 +25,11 @@ typedef struct Ast {
     char type;
     union {
         int ival;
+        struct {
+            char *sval;
+            int sid;
+            struct Ast *snext;
+        };
         Var *var;
         struct {
             struct Ast *left;
@@ -37,10 +44,12 @@ typedef struct Ast {
 } Ast;
 
 Var *vars = NULL;
+Ast *strings = NULL;
 char *REGS[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 
 void error(char *fmt, ...) __attribute__((noreturn));
 void emit_expr(Ast *ast);
+Ast *read_string(void);
 Ast *read_expr2(int prec);
 Ast *read_expr(void);
 
@@ -76,6 +85,22 @@ Ast *make_ast_sym(Var *var)
     Ast *r = malloc(sizeof(Ast));
     r->type = AST_SYM;
     r->var = var;
+    return r;
+}
+
+Ast *make_ast_str(char *str)
+{
+    Ast *r = malloc(sizeof(Ast));
+    r->type = AST_STR;
+    r->sval = str;
+    if (strings == NULL) {
+        r->sid = 0;
+        r->snext = NULL;
+    } else {
+        r->sid = strings->sid + 1;
+        r->snext = strings;
+    }
+    strings = r;
     return r;
 }
 
@@ -219,6 +244,33 @@ Ast *read_ident_or_func(char c)
     return make_ast_sym(v);
 }
 
+Ast *read_string(void)
+{
+    char *buf = malloc(BUFLEN);
+    int i = 0;
+    for (;;) {
+        int c = getc(stdin);
+        if (c == EOF) {
+            error("Unterminated string");
+        }
+        if (c == '"') {
+            break;
+        }
+        if (c == '\\') {
+            c = getc(stdin);
+            if (c == EOF) {
+                error("Unterminated \\");
+            }
+        }
+        buf[i++] = c;
+        if (i == BUFLEN - 1) {
+            error("String too long");
+        }
+    }
+    buf[i] = '\0';
+    return make_ast_str(buf);
+}
+
 Ast *read_prim(void)
 {
     int c = getc(stdin);
@@ -230,6 +282,8 @@ Ast *read_prim(void)
         if (isdigit(c)) {
             return read_number(-(c - '0'));
         }
+    } else if (c == '"') {
+        return read_string();
     } else if (isalpha(c)) {
         return read_ident_or_func(c);
     } else if (c == EOF) {
@@ -276,6 +330,17 @@ Ast *read_expr(void)
     return r;
 }
 
+void print_quote(char *p)
+{
+    while (*p) {
+        if (*p == '\"' || *p == '\\') {
+            printf("\\");
+        }
+        printf("%c", *p);
+        p++;
+    }
+}
+
 void print_ast(Ast *ast)
 {
     switch (ast->type) {
@@ -284,6 +349,11 @@ void print_ast(Ast *ast)
             break;
         case AST_SYM:
             printf("%s", ast->var->name);
+            break;
+        case AST_STR:
+            printf("\"");
+            print_quote(ast->sval);
+            printf("\"");
             break;
         case AST_FUNCALL:
             printf("%s(", ast->fname);
@@ -353,6 +423,9 @@ void emit_expr(Ast *ast)
         case AST_SYM:
             printf("\tmov -%d(%%rbp), %%eax\n", ast->var->pos * 4);
             break;
+        case AST_STR:
+            printf("\tlea .s%d(%%rip), %%rax\n", ast->sid);
+            break;
         case AST_FUNCALL:
             for (int i = 1; i < ast->nargs; i++) {
                 printf("\tpush %%%s\n", REGS[i]);
@@ -375,24 +448,45 @@ void emit_expr(Ast *ast)
     }
 }
 
+void emit_data_section(void)
+{
+    if (!strings) {
+        return;
+    }
+    printf("\t.data\n");
+    for (Ast *p = strings; p; p = p->snext) {
+        printf(".s%d:\n", p->sid);
+        printf("\t.string \"");
+        print_quote(p->sval);
+        printf("\"\n");
+    }
+}
+
 int main(int argc, char **argv)
 {
     int wantast = (argc > 1 && !strcmp(argv[1], "-a"));
+    Ast *exprs[EXPR_LEN];
+    int i;
+    for (i = 0; i < EXPR_LEN; i++) {
+        Ast *t = read_expr();
+        if (!t) {
+            break;
+        }
+        exprs[i] = t;
+    }
+    int nexpr = i;
     if (!wantast) {
+        emit_data_section();
         printf(
             "\t.text\n"
             "\t.global _mymain\n"
             "_mymain:\n");
     }
-    for (;;) {
-        Ast *ast = read_expr();
-        if (!ast) {
-            break;
-        }
+    for (i = 0; i < nexpr; i++) {
         if (wantast) {
-            print_ast(ast);
+            print_ast(exprs[i]);
         } else {
-            emit_expr(ast);
+            emit_expr(exprs[i]);
         }
     }
     if (!wantast) {

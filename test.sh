@@ -11,6 +11,7 @@ function run {
     testast '(/ (/ 24 2) 4)' '24/2/4;'
     testast '(/ (/ 24 -2) 4)' '24/-2/4;'
     testast '(= a 3)' 'a=3;'
+    testast '"abc"' '"abc";'
     testast 'a()' 'a();'
     testast 'a(b,c,d,e,f,g)' 'a(b,c,d,e,f,g);'
 
@@ -48,6 +49,10 @@ function run {
     test -25 'a=-20;sum2(a, -5);'
     test 15 'sum5(1, 2, 3, 4, 5);'
 
+    # string
+    test a3 'printf("%s", "a");3;'
+    test abc5 'printf("%s", "abc");5;'
+
     testfail '"abc'
     testfail '0abc'
     testfail '1+;'
@@ -68,7 +73,7 @@ function compile {
         echo "Faild to compile $1"
         exit
     fi
-    gcc -o tmp.out driver.c tmp.s
+    gcc -o tmp.out driver.c tmp.s -g -O0
     if [ $? -ne 0 ]; then
         echo "GCC failed"
         exit
