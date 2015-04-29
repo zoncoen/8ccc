@@ -14,6 +14,7 @@ function run {
     testast '"abc"' '"abc";'
     testast 'a()' 'a();'
     testast 'a(b,c,d,e,f,g)' 'a(b,c,d,e,f,g);'
+    testast "'a'" "'a';"
 
     # int
     test 0 '0;'
@@ -53,6 +54,11 @@ function run {
     test a3 'printf("%s", "a");3;'
     test abc5 'printf("%s", "abc");5;'
 
+    # char
+    test 98 "'a'+1;"
+    test b1 "printf(\"%c\", 'a'+1);1;"
+
+    testfail "'abc"
     testfail '"abc'
     testfail '0abc'
     testfail '1+;'

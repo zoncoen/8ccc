@@ -10,6 +10,7 @@
 
 enum {
     AST_INT,
+    AST_CHAR,
     AST_VAR,
     AST_STR,
     AST_FUNCALL,
@@ -20,6 +21,8 @@ typedef struct Ast {
     union {
         // Integer
         int ival;
+        // Char
+        char c;
         // String
         struct {
             char *sval;
@@ -52,7 +55,6 @@ char *REGS[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 
 void error(char *fmt, ...) __attribute__((noreturn));
 void emit_expr(Ast *ast);
-Ast *read_string(void);
 Ast *read_expr2(int prec);
 Ast *read_expr(void);
 
@@ -80,6 +82,14 @@ Ast *make_ast_int(int val)
     Ast *r = malloc(sizeof(Ast));
     r->type = AST_INT;
     r->ival = val;
+    return r;
+}
+
+Ast *make_ast_char(char c)
+{
+    Ast *r = malloc(sizeof(Ast));
+    r->type = AST_CHAR;
+    r->c = c;
     return r;
 }
 
@@ -237,6 +247,30 @@ Ast *read_ident_or_func(char c)
     return v ? v : make_ast_var(name);
 }
 
+Ast *read_char(void)
+{
+    char c = getc(stdin);
+    if (c == EOF) {
+        goto err;
+    }
+    if (c == '\\') {
+        c = getc(stdin);
+        if (c == EOF) {
+            goto err;
+        }
+    }
+    char c2 = getc(stdin);
+    if (c2 == EOF) {
+        goto err;
+    }
+    if (c2 != '\'') {
+        error("Malformed char constant");
+    }
+    return make_ast_char(c);
+err:
+    error("Unterminated char");
+}
+
 Ast *read_string(void)
 {
     char *buf = malloc(BUFLEN);
@@ -275,6 +309,8 @@ Ast *read_prim(void)
         if (isdigit(c)) {
             return read_number(-(c - '0'));
         }
+    } else if (c == '\'') {
+        return read_char();
     } else if (c == '"') {
         return read_string();
     } else if (isalpha(c)) {
@@ -339,6 +375,9 @@ void print_ast(Ast *ast)
     switch (ast->type) {
         case AST_INT:
             printf("%d", ast->ival);
+            break;
+        case AST_CHAR:
+            printf("'%c'", ast->c);
             break;
         case AST_VAR:
             printf("%s", ast->vname);
@@ -412,6 +451,9 @@ void emit_expr(Ast *ast)
     switch (ast->type) {
         case AST_INT:
             printf("\tmov $%d, %%eax\n", ast->ival);
+            break;
+        case AST_CHAR:
+            printf("\tmov $%d, %%eax\n", ast->c);
             break;
         case AST_VAR:
             printf("\tmov -%d(%%rbp), %%eax\n", ast->vpos * 4);
