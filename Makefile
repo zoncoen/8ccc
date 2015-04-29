@@ -1,6 +1,8 @@
-CFLAGS=-Wall -std=gnu99
+CFLAGS=-Wall -std=gnu99 -g
+OBJS=main.o lex.o string.o
 
-8ccc: 8ccc.o
+8ccc: $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS)
 
 test:
 	./test.sh

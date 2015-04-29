@@ -3,13 +3,11 @@
 function run {
     # ast
     testast '1' '1;'
-    testast '-1' '-1;'
     testast '(+ (- (+ 1 2) 3) 4)' '1+2-3+4;'
     testast '(+ (+ 1 (* 2 3)) 4)' '1+2*3+4;'
     testast '(+ (* 1 2) (* 3 4))' '1*2+3*4;'
     testast '(+ (/ 4 2) (/ 6 3))' '4/2+6/3;'
     testast '(/ (/ 24 2) 4)' '24/2/4;'
-    testast '(/ (/ 24 -2) 4)' '24/-2/4;'
     testast '(= a 3)' 'a=3;'
     testast '"abc"' '"abc";'
     testast 'a()' 'a();'
@@ -22,22 +20,18 @@ function run {
 
     # boundary value
     test 2147483647 '2147483647;'
-    test -2147483648 '-2147483648;'
 
     # arithmetic operation
     test 3 '1+2;'
     test 3 '1 + 2;'
-    test 1 '-1 + 2;'
-    test -1 '1 + -2;'
     test 10 '1+2+3+4;'
     test 4 '1+2-3+4;'
     test 11 '1+2*3+4;'
     test 14 '1*2+3*4;'
     test 4 '4/2+6/3;'
     test 3 '24/2/4;'
-    test -9 '-3*3;'
+    test 9 '3*3;'
     test 1 '3/3;'
-    test 1 '-3/-3;'
 
     # variable
     test 2 '1;2;'
@@ -46,8 +40,7 @@ function run {
 
     # function call
     test 25 'sum2(20, 5);'
-    test -25 'sum2(-20, -5);'
-    test -25 'a=-20;sum2(a, -5);'
+    test 25 'a=20;sum2(a, 5);'
     test 15 'sum5(1, 2, 3, 4, 5);'
 
     # string
@@ -62,7 +55,6 @@ function run {
     testfail '"abc'
     testfail '0abc'
     testfail '1+;'
-    testfail '1+"abc"'
 }
 
 function setup {

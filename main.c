@@ -1,10 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <stdarg.h>
 #include <string.h>
+#include "8ccc.h"
 
-#define BUFLEN 256
 #define EXPR_LEN 100
 #define MAX_ARGS 6
 
@@ -53,7 +52,6 @@ Ast *vars = NULL;
 Ast *strings = NULL;
 char *REGS[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 
-void error(char *fmt, ...) __attribute__((noreturn));
 void emit_expr(Ast *ast);
 Ast *read_expr2(int prec);
 Ast *read_expr(void);
@@ -104,7 +102,7 @@ Ast *make_ast_var(char *vname)
     return r;
 }
 
-Ast *make_ast_str(char *str)
+Ast *make_ast_string(char *str)
 {
     Ast *r = malloc(sizeof(Ast));
     r->type = AST_STR;
@@ -156,76 +154,24 @@ int priority(char op)
     }
 }
 
-void skip_space(void)
-{
-    int c;
-    while ((c = getc(stdin)) != EOF) {
-        if (isspace(c)) {
-            continue;
-        }
-        ungetc(c, stdin);
-        return;
-    }
-}
-
-Ast *read_number(int n)
-{
-    for (;;) {
-        int c = getc(stdin);
-        if (!isdigit(c)) {
-            ungetc(c, stdin);
-            return make_ast_int(n);
-        }
-        if (n < 0) {
-            n = n * 10 - (c - '0');
-        } else {
-            n = n * 10 + (c - '0');
-        }
-    }
-    return make_ast_int(n);
-}
-
-char *read_ident(char c)
-{
-    char *buf = malloc(BUFLEN);
-    buf[0] = c;
-    int i = 1;
-    for (;;) {
-        int c = getc(stdin);
-        if (!isalnum(c)) {
-            ungetc(c, stdin);
-            break;
-        }
-        buf[i++] = c;
-        if (i == BUFLEN - 1) {
-            error("Identifier too long");
-        }
-    }
-    buf[i] = '\0';
-    return buf;
-}
-
 Ast *read_func_args(char *fname)
 {
     Ast **args = malloc(sizeof(Ast *) * (MAX_ARGS + 1));
     int i = 0, nargs = 0;
     for (; i < MAX_ARGS; i++) {
-        skip_space();
-        char c = getc(stdin);
-        if (c == ')') {
+        Token *tok = read_token();
+        if (is_punct(tok, ')')) {
             break;
         }
-        ungetc(c, stdin);
+        unget_token(tok);
         args[i] = read_expr2(0);
         nargs++;
-        c = getc(stdin);
-        if (c == ')') {
+        tok = read_token();
+        if (is_punct(tok, ')')) {
             break;
         }
-        if (c == ',') {
-            skip_space();
-        } else {
-            error("Unexpected charanter: '%c'", c);
+        if (!is_punct(tok, ',')) {
+            error("Unexpected token: '%s'", token_to_string(tok));
         }
     }
     if (i == MAX_ARGS) {
@@ -234,115 +180,58 @@ Ast *read_func_args(char *fname)
     return make_ast_funcall(fname, nargs, args);
 }
 
-Ast *read_ident_or_func(char c)
+Ast *read_ident_or_func(char *name)
 {
-    char *name = read_ident(c);
-    skip_space();
-    char c2 = getc(stdin);
-    if (c2 == '(') {
+    Token *tok = read_token();
+    if (is_punct(tok, '(')) {
         return read_func_args(name);
     }
-    ungetc(c2, stdin);
+    unget_token(tok);
     Ast *v = find_var(name);
     return v ? v : make_ast_var(name);
 }
 
-Ast *read_char(void)
-{
-    char c = getc(stdin);
-    if (c == EOF) {
-        goto err;
-    }
-    if (c == '\\') {
-        c = getc(stdin);
-        if (c == EOF) {
-            goto err;
-        }
-    }
-    char c2 = getc(stdin);
-    if (c2 == EOF) {
-        goto err;
-    }
-    if (c2 != '\'') {
-        error("Malformed char constant");
-    }
-    return make_ast_char(c);
-err:
-    error("Unterminated char");
-}
-
-Ast *read_string(void)
-{
-    char *buf = malloc(BUFLEN);
-    int i = 0;
-    for (;;) {
-        int c = getc(stdin);
-        if (c == EOF) {
-            error("Unterminated string");
-        }
-        if (c == '"') {
-            break;
-        }
-        if (c == '\\') {
-            c = getc(stdin);
-            if (c == EOF) {
-                error("Unterminated \\");
-            }
-        }
-        buf[i++] = c;
-        if (i == BUFLEN - 1) {
-            error("String too long");
-        }
-    }
-    buf[i] = '\0';
-    return make_ast_str(buf);
-}
-
 Ast *read_prim(void)
 {
-    int c = getc(stdin);
-    if (isdigit(c)) {
-        return read_number(c - '0');
-    } else if (c == '-') {
-        skip_space();
-        c = getc(stdin);
-        if (isdigit(c)) {
-            return read_number(-(c - '0'));
-        }
-    } else if (c == '\'') {
-        return read_char();
-    } else if (c == '"') {
-        return read_string();
-    } else if (isalpha(c)) {
-        return read_ident_or_func(c);
-    } else if (c == EOF) {
+    Token *tok = read_token();
+    if (!tok) {
         return NULL;
     }
-    error("Don't know how to handle '%c'", c);
+    switch (tok->type) {
+        case TTYPE_IDENT:
+            return read_ident_or_func(tok->sval);
+        case TTYPE_INT:
+            return make_ast_int(tok->ival);
+        case TTYPE_CHAR:
+            return make_ast_char(tok->c);
+        case TTYPE_STRING:
+            return make_ast_string(tok->sval);
+        case TTYPE_PUNCT:
+            error("unexpected character: '%c'", tok->punct);
+        default:
+            error("internal error: unknown token type: %d", tok->type);
+    }
 }
 
 Ast *read_expr2(int prec)
 {
-    skip_space();
     Ast *ast = read_prim();
     if (!ast) {
         return NULL;
     }
     for (;;) {
-        skip_space();
-        int c = getc(stdin);
-        if (c == EOF) {
+        Token *tok = read_token();
+        if (tok->type != TTYPE_PUNCT) {
+            unget_token(tok);
             return ast;
         }
-        int prec2 = priority(c);
+        int prec2 = priority(tok->punct);
         if (prec2 < 0 || prec2 < prec) {
-            ungetc(c, stdin);
+            unget_token(tok);
             return ast;
         }
-        skip_space();
-        ast = make_ast_op(c, ast, read_expr2(prec2 + 1));
+        ast = make_ast_op(tok->punct, ast, read_expr2(prec2 + 1));
     }
-    return ast;
 }
 
 Ast *read_expr(void)
@@ -351,10 +240,9 @@ Ast *read_expr(void)
     if (!r) {
         return NULL;
     }
-    skip_space();
-    int c = getc(stdin);
-    if (c != ';') {
-        error("Unterminated expression '%c'", c);
+    Token *tok = read_token();
+    if (!is_punct(tok, ';')) {
+        error("Unterminated expression: %s", token_to_string(tok));
     }
     return r;
 }
