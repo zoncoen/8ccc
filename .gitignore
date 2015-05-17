@@ -1,3 +1,5 @@
 8ccc
 *.o
 tmp.*
+
+.ctags

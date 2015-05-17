@@ -8,4 +8,4 @@ test:
 	./test.sh
 
 clean:
-	rm -f 8ccc *.o tmp.*
+	rm -rf 8ccc *.o tmp.*
